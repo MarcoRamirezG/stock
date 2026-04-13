@@ -1,0 +1,379 @@
+================================================================================
+  API STOCK - DOCUMENTACIÓN DE ENDPOINTS
+================================================================================
+
+Base URL:       /api/
+Autenticación:  Session o Basic Auth
+Permiso:        Usuario staff o miembro del grupo "operador_stock"
+
+================================================================================
+  1. IMPORTAR XML Y CONFIRMAR STOCK
+================================================================================
+
+  POST /api/pesajes-camiones/importar-xml-y-confirmar/
+
+  Recibe un XML de pesaje E-truck, lo importa y genera la operación de stock.
+
+  REQUEST (JSON):
+  {
+    "xml": "<Pesaje><PesNro>123</PesNro>...</Pesaje>"
+  }
+
+  CÓDIGOS DE RESPUESTA:
+  201  Operación creada exitosamente
+  200  Operación ya existía (idempotente, mismo pes_nro)
+  400  Error: ciclo no soportado, producto no mapeado, bodega no encontrada
+  401  Sin autenticación
+  403  Sin permisos
+
+  RESPONSE (201 / 200):
+  {
+    "pes_nro": "TEST-001",
+    "warnings": ["Cliente no encontrado (RUT: ...). Operación sin cliente."],
+    "operacion": {
+      "id": 1,
+      "external_uid": "TEST-001",
+      "tipo": "ENTRADA",
+      "estado": "CONFIRMADO",
+      "ciclo": "1",
+      "nro_guia": "GD-100",
+      "fecha_documento": "2025-01-15T00:00:00Z",
+      "cliente": 1,
+      "cliente_rut": "76.000.000-1",
+      "bodega": 1,
+      "bodega_codigo": "PRINCIPAL",
+      "patente": "ABCD12",
+      "transportista": "Transportes Test",
+      "chofer": "Juan Chofer",
+      "peso_bruto": "25000.000",
+      "peso_tara": "10000.000",
+      "peso_neto": "15000.000",
+      "observaciones": "",
+      "creado_en": "2026-03-23T12:00:00Z",
+      "actualizado_en": "2026-03-23T12:00:00Z",
+      "creado_por": 1,
+      "lineas": [
+        {
+          "id": 1,
+          "producto": "MADERA-01",
+          "producto_codigo": "MADERA-01",
+          "producto_nombre": "Madera Pino",
+          "bodega": 1,
+          "bodega_codigo": "PRINCIPAL",
+          "cantidad": "100.000",
+          "peso": "15000.000",
+          "stock_anterior": "0.000",
+          "stock_posterior": "100.000",
+          "creado_en": "2026-03-23T12:00:00Z"
+        }
+      ]
+    },
+    "operacion_salida": { ... }   // Solo presente en ciclo 8 (transferencia)
+  }
+
+  RESPONSE (400):
+  {
+    "error": "Ciclo \"5\" (normalizado: \"5\") no es soportado...",
+    "tipo": "CicloNoSoportado"
+  }
+
+  REGLAS DE NEGOCIO:
+  - Ciclo 1 (Recepción)     -> ENTRADA de stock (cantidad positiva)
+  - Ciclo 2 (Despacho)      -> SALIDA de stock (cantidad negativa)
+  - Ciclo 8 (Transferencia) -> SALIDA de bodega origen + ENTRADA a bodega destino
+  - Otros ciclos             -> Rechazados con error 400
+
+  IDEMPOTENCIA:
+  Si se envía el mismo XML dos veces (mismo PesNro), la segunda vez retorna
+  200 con la operación existente sin duplicar.
+
+  RESOLUCIÓN DE BODEGA (prioridad):
+  1. ClienteBodega con sucursal exacta del cliente
+  2. ClienteBodega default del cliente (es_default=True)
+  3. Bodega con código "PRINCIPAL"
+  4. Primera bodega activa
+
+  RESOLUCIÓN DE CLIENTE:
+  - Ciclo 1: se busca por RUT de origen (PDcOriRut)
+  - Ciclo 2: se busca por RUT de destino (PDcDesRut)
+
+  RESOLUCIÓN DE PRODUCTO (prioridad):
+  1. ClienteProducto del cliente (mapeo codigo_etruck -> producto)
+  2. Producto directo por código
+
+
+================================================================================
+  2. CATÁLOGOS CRUD
+================================================================================
+
+  Todos los catálogos soportan:
+    GET     /api/{recurso}/          Listar todos
+    GET     /api/{recurso}/{id}/     Detalle de uno
+    POST    /api/{recurso}/          Crear nuevo
+    PUT     /api/{recurso}/{id}/     Actualizar completo
+    PATCH   /api/{recurso}/{id}/     Actualizar parcial
+    DELETE  /api/{recurso}/{id}/     Eliminar
+
+--------------------------------------------------------------------------------
+  2.1 CLIENTES
+--------------------------------------------------------------------------------
+
+  URL: /api/clientes/
+
+  CAMPOS:
+    id            int       (auto, solo lectura)
+    rut           string    (requerido, único, max 20)
+    razon_social  string    (requerido, max 255)
+    activo        boolean   (default: true)
+
+  EJEMPLO POST:
+  {
+    "rut": "76.000.000-1",
+    "razon_social": "Forestal Test S.A.",
+    "activo": true
+  }
+
+--------------------------------------------------------------------------------
+  2.2 SUCURSALES DE CLIENTE
+--------------------------------------------------------------------------------
+
+  URL: /api/clientes-sucursal/
+
+  CAMPOS:
+    id        int       (auto, solo lectura)
+    cliente   int       (requerido, FK a Cliente)
+    codigo    string    (requerido, max 80)
+    nombre    string    (opcional, max 255)
+    activo    boolean   (default: true)
+
+  RESTRICCIÓN: unique_together (cliente, codigo)
+
+  EJEMPLO POST:
+  {
+    "cliente": 1,
+    "codigo": "PLANTA-NORTE",
+    "nombre": "Planta Norte Los Ángeles",
+    "activo": true
+  }
+
+--------------------------------------------------------------------------------
+  2.3 BODEGAS
+--------------------------------------------------------------------------------
+
+  URL: /api/bodegas/
+
+  CAMPOS:
+    id      int       (auto, solo lectura)
+    codigo  string    (requerido, único, max 80)
+    nombre  string    (requerido, max 255)
+
+  EJEMPLO POST:
+  {
+    "codigo": "PRINCIPAL",
+    "nombre": "Bodega Principal"
+  }
+
+--------------------------------------------------------------------------------
+  2.4 CLIENTE-BODEGA (mapeo cliente/sucursal -> bodega)
+--------------------------------------------------------------------------------
+
+  URL: /api/clientes-bodega/
+
+  CAMPOS:
+    id          int       (auto, solo lectura)
+    cliente     int       (requerido, FK a Cliente)
+    sucursal    int       (opcional, FK a ClienteSucursal, null)
+    bodega      int       (requerido, FK a Bodega)
+    es_default  boolean   (default: false)
+
+  RESTRICCIÓN: unique_together (cliente, sucursal, bodega)
+
+  EJEMPLO POST:
+  {
+    "cliente": 1,
+    "sucursal": null,
+    "bodega": 1,
+    "es_default": true
+  }
+
+--------------------------------------------------------------------------------
+  2.5 CLIENTE-PRODUCTO (mapeo código E-truck -> producto stock)
+--------------------------------------------------------------------------------
+
+  URL: /api/clientes-producto/
+
+  CAMPOS:
+    id              int       (auto, solo lectura)
+    cliente         int       (requerido, FK a Cliente)
+    codigo_etruck   string    (requerido, max 80)
+    producto        string    (requerido, FK a Producto por código)
+    activo          boolean   (default: true)
+
+  RESTRICCIÓN: unique_together (cliente, codigo_etruck)
+
+  EJEMPLO POST:
+  {
+    "cliente": 1,
+    "codigo_etruck": "COD-XML-123",
+    "producto": "MADERA-01",
+    "activo": true
+  }
+
+
+================================================================================
+  3. PESAJES (datos E-truck como JSON - solo lectura)
+================================================================================
+
+  Los ~3919 pesajes ya importados desde SQL Server quedan expuestos como JSON.
+
+--------------------------------------------------------------------------------
+  3.1 LISTAR PESAJES
+--------------------------------------------------------------------------------
+
+  GET /api/pesajes/
+
+  Devuelve listado ligero de pesajes (sin documentos ni atributos anidados).
+
+  FILTROS (query params opcionales):
+    ?pes_nro=123          Busca por número de pesaje (parcial)
+    ?ciclo=Recepción      Filtra por ciclo de pesaje (parcial)
+    ?patente=ABCD         Filtra por patente del vehículo (parcial)
+    ?estado=Finalizado    Filtra por estado del pesaje (parcial)
+
+  EJEMPLO RESPONSE:
+  [
+    {
+      "id": 1,
+      "pes_nro": "12345",
+      "pes_est": "Finalizado",
+      "pes_fec_ing": "2025-01-15T10:30:00Z",
+      "vhc_pat": "ABCD12",
+      "pes_tra_nom": "Transportes Test",
+      "pes_com_cho_nom": "Juan Chofer",
+      "pes_cic_pes_des": "Recepción",
+      "pes_vhc_com_net": "15000.000",
+      "estado_origen_sql": "OK",
+      "fecha_origen_sql": "2025-01-15T00:00:00Z",
+      "creado_en": "2026-03-23T12:00:00Z"
+    }
+  ]
+
+--------------------------------------------------------------------------------
+  3.2 DETALLE DE PESAJE
+--------------------------------------------------------------------------------
+
+  GET /api/pesajes/{id}/
+
+  Devuelve pesaje completo con documentos, productos y atributos anidados.
+
+  EJEMPLO RESPONSE:
+  {
+    "id": 1,
+    "pes_nro": "12345",
+    "pes_est": "Finalizado",
+    "pes_fec_ing": "2025-01-15T10:30:00Z",
+    "vhc_pat": "ABCD12",
+    "pes_tra_nom": "Transportes Test",
+    "pes_com_cho_nom": "Juan Chofer",
+    "pes_cic_pes_des": "Recepción",
+    "pes_vhc_com_net": "15000.000",
+    "fecha_origen_sql": "2025-01-15T00:00:00Z",
+    "id_origen_sql": 42,
+    "estado_origen_sql": "OK",
+    "bse_cod_origen_sql": "BSE1",
+    "modo_origen_sql": "Normal",
+    "data_json": { "...todos los campos del XML..." },
+    "documentos": [
+      {
+        "id": 1,
+        "pdc_id": "1",
+        "pdc_doc_nro": "GD-100",
+        "tipo_documento": "Guia Despacho",
+        "fecha_documento": "2025-01-15T00:00:00Z",
+        "origen": "Forestal Test S.A.",
+        "destino": "Puerto Destino",
+        "data_json": { "...campos del documento..." },
+        "productos_documento": [
+          {
+            "id": 1,
+            "codigo_producto": "MADERA-01",
+            "nombre_producto": "Madera Pino",
+            "linea": "1",
+            "cantidad": "100.000",
+            "peso": "15000.000",
+            "data_json": { "...campos del producto..." }
+          }
+        ]
+      }
+    ],
+    "atributos": [
+      { "id": 1, "pes_att_id": "Humedad", "pes_att_val": "35%" }
+    ],
+    "creado_en": "2026-03-23T12:00:00Z",
+    "actualizado_en": "2026-03-23T12:00:00Z"
+  }
+
+================================================================================
+  4. CONSULTAS DE STOCK (solo lectura)
+================================================================================
+
+--------------------------------------------------------------------------------
+  4.1 OPERACIONES
+--------------------------------------------------------------------------------
+
+  GET /api/operaciones/          Listar todas las operaciones
+  GET /api/operaciones/{id}/     Detalle con líneas de kardex anidadas
+
+  CAMPOS DE RESPUESTA:
+    id, pesaje, external_uid, tipo, estado, ciclo, nro_guia,
+    fecha_documento, cliente, cliente_rut, bodega, bodega_codigo,
+    patente, transportista, chofer,
+    peso_bruto, peso_tara, peso_neto,
+    observaciones, creado_en, actualizado_en, creado_por,
+    lineas: [{ id, producto, producto_codigo, producto_nombre,
+               bodega, bodega_codigo, cantidad, peso,
+               stock_anterior, stock_posterior, creado_en }]
+
+--------------------------------------------------------------------------------
+  4.2 KARDEX
+--------------------------------------------------------------------------------
+
+  GET /api/kardex/               Listar todas las líneas de kardex
+  GET /api/kardex/{id}/          Detalle de una línea
+  GET /api/kardex/?producto={codigo}&bodega={id}   Filtrar por producto y/o bodega
+
+  CAMPOS DE RESPUESTA:
+    id, producto, producto_codigo, producto_nombre,
+    bodega, bodega_codigo,
+    cantidad, peso, stock_anterior, stock_posterior,
+    creado_en
+
+
+================================================================================
+  TIPOS Y VALORES ENUMERADOS
+================================================================================
+
+  Operacion.tipo:
+    ENTRADA   Entrada de stock (recepción o transferencia destino)
+    SALIDA    Salida de stock (despacho o transferencia origen)
+
+  Operacion.estado:
+    CONFIRMADO   Operación activa
+    ANULADO      Operación anulada
+
+  Ciclos soportados:
+    1   Recepción               -> ENTRADA
+    2   Despacho                -> SALIDA
+    8   Transferencia bodegas   -> SALIDA + ENTRADA
+
+
+================================================================================
+  ERRORES POSIBLES (campo "tipo" en response 400)
+================================================================================
+
+  CicloNoSoportado    El ciclo del pesaje no es 1, 2 ni 8
+  BodegaNoEncontrada  No hay bodega activa para asignar
+  ProductoNoMapeado   Código de producto no existe ni está mapeado
+  XmlImportError      XML vacío o con estructura inválida
+  InvalidXmlError     XML mal formado
+  MissingPesNroError  El XML no contiene PesNro

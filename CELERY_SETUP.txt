@@ -1,0 +1,107 @@
+================================================================================
+  GUÍA PARA CORRER CELERY - Proyecto Stock
+================================================================================
+
+REQUISITOS PREVIOS
+------------------
+1. Python 3.x con virtualenv creado en .venv
+2. Redis corriendo en localhost:6379 (broker por defecto)
+3. Dependencias instaladas (celery, redis, django-celery-beat)
+
+INSTALAR REDIS EN WINDOWS
+--------------------------
+Opción A - Usando Memurai (alternativa nativa a Redis para Windows):
+  Descargar desde https://www.memurai.com/get-memurai
+
+Opción B - WSL (Windows Subsystem for Linux):
+  wsl --install                          (si no tienes WSL)
+  sudo apt update && sudo apt install redis-server
+  sudo service redis-server start
+
+Verificar que Redis esté corriendo:
+  redis-cli ping
+  → Debe responder PONG
+
+
+ACTIVAR VIRTUALENV
+------------------
+  cd C:\Users\mramirezg\Desktop\stock
+  .\.venv\Scripts\Activate.ps1
+
+
+INSTALAR DEPENDENCIAS (si no están instaladas)
+-----------------------------------------------
+  pip install celery redis django-celery-beat
+
+
+VARIABLES DE ENTORNO (opcionales, tienen valores por defecto)
+-------------------------------------------------------------
+  $env:CELERY_BROKER_URL = "redis://127.0.0.1:6379/0"
+  $env:CELERY_RESULT_BACKEND = "redis://127.0.0.1:6379/0"
+
+Si usas otro broker o puerto, ajusta estas variables antes de iniciar.
+
+
+CORRER EL WORKER
+-----------------
+Terminal 1 (worker que ejecuta las tareas):
+
+  cd C:\Users\mramirezg\Desktop\stock
+  .\.venv\Scripts\Activate.ps1
+  celery -A stock worker --loglevel=info --pool=solo
+
+Nota: --pool=solo es necesario en Windows (prefork no funciona).
+
+
+CORRER CELERY BEAT (programador de tareas periódicas)
+------------------------------------------------------
+Terminal 2 (scheduler que lanza tareas según horario):
+
+  cd C:\Users\mramirezg\Desktop\stock
+  .\.venv\Scripts\Activate.ps1
+  celery -A stock beat --loglevel=info
+
+Beat usa django-celery-beat con DatabaseScheduler, así que puedes
+gestionar tareas periódicas desde el Django Admin.
+
+
+TAREA CONFIGURADA
+-----------------
+- importar-pesajes-cada-5-min
+  Task:     camiones.tasks.importar_pesajes_nuevos
+  Cada:     5 minutos (300 seg)
+  Params:   top=500
+  Retries:  3 (con 60s de espera entre reintentos)
+
+
+CORRER DJANGO + CELERY (resumen de terminales)
+-----------------------------------------------
+Terminal 1 - Django:
+  .\.venv\Scripts\Activate.ps1
+  python manage.py runserver
+
+Terminal 2 - Celery Worker:
+  .\.venv\Scripts\Activate.ps1
+
+
+
+Terminal 3 - Celery Beat:
+  .\.venv\Scripts\Activate.ps1
+  celery -A stock beat --loglevel=info
+
+
+EJECUTAR UNA TAREA MANUALMENTE (desde Django shell)
+----------------------------------------------------
+  python manage.py shell
+  >>> from camiones.tasks import importar_pesajes_nuevos
+  >>> result = importar_pesajes_nuevos.delay(top=100)
+  >>> result.get(timeout=60)
+
+
+TROUBLESHOOTING
+---------------
+- "Connection refused" → Redis no está corriendo. Inicialo primero.
+- "No module named 'celery'" → Activa el virtualenv e instala: pip install celery
+- Worker no descubre tareas → Verifica que 'camiones' esté en INSTALLED_APPS.
+- Errores de SQL Server → Revisa las variables ETRUCK_SQLSERVER_* en settings.py.
+================================================================================
