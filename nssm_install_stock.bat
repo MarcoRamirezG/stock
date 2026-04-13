@@ -12,10 +12,10 @@ REM
 REM  Redis: DB 8 (broker), DB 9 (results)
 REM ================================================================
 
-SET NSSM=C:\nssm-2.24\win64\nssm.exe
+SET NSSM=C:\nssm\nssm-2.24-101-g897c7ad\win64\nssm.exe
 SET PROJECT_DIR=C:\www\ProyectosDjango\stock
-SET VENV_PYTHON=C:\www\EntornosProyectos\stock\.venv\Scripts\python.exe
-SET VENV_CELERY=C:\www\EntornosProyectos\stock\.venv\Scripts\celery.exe
+SET VENV_PYTHON=C:\Users\Administrador.PUERTO\stock\.venv\Scripts\python.exe
+SET VENV_CELERY=C:\Users\Administrador.PUERTO\stock\.venv\Scripts\celery.exe
 SET LOG_DIR=%PROJECT_DIR%\logs
 
 REM Crear carpeta de logs
