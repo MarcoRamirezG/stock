@@ -1,7 +1,11 @@
+import pyodbc
+from django.conf import settings
+
 from rest_framework import status, viewsets
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from camiones.models import (
     Bodega, Cliente, ClienteBodega, ClienteProducto, ClienteSucursal,
@@ -162,3 +166,242 @@ class PesajeViewSet(viewsets.ReadOnlyModelViewSet):
         if self.action == 'retrieve':
             return PesajeDetailSerializer
         return PesajeListSerializer
+
+
+# ─── API Pesajes Codelco (SELECT directo SQL Server, sin XML) ───
+
+_CODELCO_SQL = """
+WITH PesajesCodelco AS (
+    SELECT
+        ROW_NUMBER() OVER (
+            PARTITION BY P.PesBseCod, P.PesNro
+            ORDER BY D.PDcID ASC, DD.PDcLin ASC
+        ) AS rn,
+
+        CAST(P.PesNro AS varchar(80))                             AS pes_nro,
+        RTRIM(P.PesEst)                                           AS pes_est,
+        P.PesFecIng                                               AS pes_fec_ing,
+        RTRIM(P.VhcPat)                                           AS vhc_pat,
+        RTRIM(ISNULL(P.PesAcoPat, ''))                            AS pes_aco_pat,
+        RTRIM(ISNULL(T.TraNom, ''))                               AS pes_tra_nom,
+        RTRIM(ISNULL(ChCom.ChoNom, ''))                           AS pes_com_cho_nom,
+        RTRIM(ISNULL(CP.CicPesDes, ''))                           AS pes_cic_pes_des,
+        CAST(P.PesCicPesCod AS varchar(80))                       AS pes_cic_pes_cod,
+        CAST(ISNULL(P.PesVhcComNet, 0)    AS decimal(18,3))       AS pes_vhc_com_net,
+        CAST(ISNULL(P.PesVhcComNetCor, 0) AS decimal(18,0))       AS pes_vhc_com_net_cor,
+        CAST(ISNULL(DD.PDcProNetInf, 0)   AS decimal(18,0))       AS pes_vhc_net_inf,
+        P.PesComFec                                               AS pes_com_fec,
+        RTRIM(ISNULL(P.PesComObs, ''))                            AS pes_com_obs,
+        P.PesTarFec                                               AS pes_tar_fec,
+        CAST(D.PDcDocNro AS varchar(80))                          AS pdc_doc_nro,
+        RTRIM(ISNULL(CliDst.CliRazSoc, ''))                          AS pdc_dst_cli_nom,
+        RTRIM(ISNULL(SucDst.CliSucNom, ''))                           AS pdc_dst_cli_suc_nom,
+        RTRIM(ISNULL(CliOri.CliRazSoc, ''))                          AS pdc_ori_cli_nom,
+        RTRIM(ISNULL(SucOri.CliSucNom, ''))                       AS pdc_ori_cli_suc_nom,
+        RTRIM(ISNULL(DD.PDcProCod, ''))                           AS pdc_pro_cod,
+        RTRIM(ISNULL(PR.ProNom, ''))                              AS pdc_pro_nom,
+        CAST(ISNULL(DD.PDcProNetInf, 0)   AS decimal(18,0))       AS pdc_pro_net_inf,
+        ISNULL(Attr.attr_destino, '')                             AS attr_destino,
+        ISNULL(Attr.attr_origen,  '')                             AS attr_origen,
+        ISNULL(Attr.attr_sello,   '')                             AS attr_sello,
+        ISNULL(Attr.attr_lote,    '')                             AS attr_lote,
+        ISNULL(Attr.attr_turno,   '')                             AS attr_turno,
+        'R'       AS estado_origen_sql,
+        GETDATE() AS fecha_origen_sql
+
+    FROM dbo.Pesaje P
+
+    LEFT JOIN dbo.PesajeDocumento D
+        ON D.PesBseCod = P.PesBseCod AND D.PesNro = P.PesNro
+
+    LEFT JOIN dbo.PesajeDocumentoDetalle DD
+        ON DD.PesBseCod = D.PesBseCod AND DD.PesNro = D.PesNro AND DD.PDcID = D.PDcID
+
+    LEFT JOIN dbo.Producto PR
+        ON PR.ProCod = DD.PDcProCod
+
+    LEFT JOIN dbo.Cliente CliOri ON CliOri.CliID = D.PDcOriCliID
+    LEFT JOIN dbo.ClienteSucursal SucOri
+        ON SucOri.CliID = D.PDcOriCliID AND SucOri.CliSucCod = D.PDcOriCliSucCod
+
+    LEFT JOIN dbo.Cliente CliDst ON CliDst.CliID = D.PDcDstCliID
+    LEFT JOIN dbo.ClienteSucursal SucDst
+        ON SucDst.CliID = D.PDcDstCliID AND SucDst.CliSucCod = D.PDcDstCliSucCod
+
+    LEFT JOIN dbo.Transportista T   ON T.TraID   = P.PesTraID
+    LEFT JOIN dbo.Chofer ChCom      ON ChCom.ChoID = P.PesComChoID
+    LEFT JOIN dbo.CicloPesaje CP    ON CP.CicPesCod = P.PesCicPesCod
+
+    OUTER APPLY (
+        SELECT
+            MAX(CASE WHEN LTRIM(RTRIM(A.PesAttID)) = 'DESTINO'
+                THEN NULLIF(LTRIM(RTRIM(A.PesAttVal)), '') END) AS attr_destino,
+            MAX(CASE WHEN LTRIM(RTRIM(A.PesAttID)) = 'ORIGEN'
+                THEN NULLIF(LTRIM(RTRIM(A.PesAttVal)), '') END) AS attr_origen,
+            MAX(CASE WHEN LTRIM(RTRIM(A.PesAttID)) = 'SELLO'
+                THEN NULLIF(LTRIM(RTRIM(A.PesAttVal)), '') END) AS attr_sello,
+            MAX(CASE WHEN LTRIM(RTRIM(A.PesAttID)) = 'LOTE'
+                THEN NULLIF(LTRIM(RTRIM(A.PesAttVal)), '') END) AS attr_lote,
+            MAX(CASE WHEN LTRIM(RTRIM(A.PesAttID)) = 'TURNO'
+                THEN NULLIF(LTRIM(RTRIM(A.PesAttVal)), '') END) AS attr_turno
+        FROM dbo.PesajeAtributo A
+        WHERE A.PesBseCod = P.PesBseCod AND A.PesNro = P.PesNro
+    ) Attr
+
+    WHERE P.PesBseCod = 3
+      AND P.PesEst = 'T'
+      AND (CliOri.CliDId = 61704000 OR CliDst.CliDId = 61704000)
+)
+SELECT *
+FROM PesajesCodelco
+WHERE rn = 1
+  {where_extra}
+ORDER BY pes_fec_ing DESC, pes_nro DESC
+"""
+
+_CODELCO_FIELDS = [
+    'pes_nro', 'pes_est', 'pes_fec_ing', 'vhc_pat', 'pes_aco_pat',
+    'pes_tra_nom', 'pes_com_cho_nom', 'pes_cic_pes_des', 'pes_cic_pes_cod',
+    'pes_vhc_com_net', 'pes_vhc_com_net_cor', 'pes_vhc_net_inf',
+    'pes_com_fec', 'pes_com_obs', 'pes_tar_fec', 'pdc_doc_nro',
+    'pdc_dst_cli_nom', 'pdc_dst_cli_suc_nom', 'pdc_ori_cli_nom', 'pdc_ori_cli_suc_nom',
+    'pdc_pro_cod', 'pdc_pro_nom',
+    'pdc_pro_net_inf', 'attr_destino', 'attr_origen', 'attr_sello',
+    'attr_lote', 'attr_turno', 'estado_origen_sql', 'fecha_origen_sql',
+]
+
+
+def _codelco_conn():
+    conn_str = (
+        f"DRIVER={{{getattr(settings, 'ETRUCK_CODELCO_SQL_DRIVER', 'ODBC Driver 17 for SQL Server')}}};"
+        f"SERVER={settings.ETRUCK_CODELCO_SQL_SERVER};"
+        f"DATABASE={settings.ETRUCK_CODELCO_SQL_DATABASE};"
+        f"UID={settings.ETRUCK_CODELCO_SQL_USER};"
+        f"PWD={settings.ETRUCK_CODELCO_SQL_PASSWORD};"
+        "TrustServerCertificate=yes;"
+    )
+    return pyodbc.connect(conn_str, timeout=30)
+
+
+class CodelcoPagination(PageNumberPagination):
+    page_size = 500
+    page_size_query_param = 'page_size'
+    max_page_size = 2000
+
+
+class PesajesCodelcoAPIView(APIView):
+    """
+    GET /api/pesajes-codelco/
+
+    Lee pesajes finalizados de Codelco directamente desde SQL Server.
+    No usa XML. No modifica datos locales.
+
+    Filtros opcionales:
+      - pes_nro       : número de pesaje (búsqueda exacta)
+      - patente       : patente del vehículo (búsqueda exacta, mayúsculas)
+      - guia          : número de guía / pdc_doc_nro (exacto)
+      - fecha_desde   : ISO date YYYY-MM-DD (inclusive)
+      - fecha_hasta   : ISO date YYYY-MM-DD (inclusive)
+    """
+    permission_classes = [EsOperadorStock]
+
+    def get(self, request):
+        conditions = []
+        params = []
+
+        pes_nro = request.query_params.get('pes_nro', '').strip()
+        if pes_nro:
+            conditions.append("pes_nro = ?")
+            params.append(pes_nro)
+
+        patente = request.query_params.get('patente', '').strip().upper()
+        if patente:
+            conditions.append("vhc_pat = ?")
+            params.append(patente)
+
+        guia = request.query_params.get('guia', '').strip()
+        if guia:
+            conditions.append("pdc_doc_nro = ?")
+            params.append(guia)
+
+        fecha_desde = request.query_params.get('fecha_desde', '').strip()
+        if fecha_desde:
+            conditions.append("pes_fec_ing >= CAST(? AS date)")
+            params.append(fecha_desde)
+
+        fecha_hasta = request.query_params.get('fecha_hasta', '').strip()
+        if fecha_hasta:
+            conditions.append("pes_fec_ing < DATEADD(day, 1, CAST(? AS date))")
+            params.append(fecha_hasta)
+
+        where_extra = ("AND " + " AND ".join(conditions)) if conditions else ""
+        sql = _CODELCO_SQL.format(where_extra=where_extra)
+
+        try:
+            with _codelco_conn() as conn:
+                cursor = conn.cursor()
+                cursor.execute(sql, params)
+                rows = cursor.fetchall()
+        except Exception as exc:
+            return Response(
+                {'error': 'Error al consultar SQL Server', 'detalle': str(exc)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        # Serializar filas a dicts (rn ya filtrado en el WHERE, no se expone)
+        data = []
+        for row in rows:
+            item = {}
+            for i, field in enumerate(_CODELCO_FIELDS):
+                val = row[i + 1]  # +1 porque columna 0 es rn (no expuesta)
+                if hasattr(val, 'isoformat'):
+                    val = val.isoformat()
+                elif hasattr(val, '__float__'):
+                    val = str(val)
+                item[field] = val
+            data.append(item)
+
+        paginator = CodelcoPagination()
+        page = paginator.paginate_queryset(data, request, view=self)
+        return paginator.get_paginated_response(page)
+
+
+class PesajeCodelcoDetailAPIView(APIView):
+    """
+    GET /api/pesajes-codelco/<pes_nro>/
+
+    Retorna el detalle de un pesaje Codelco por su número de pesaje.
+    Responde 404 si no existe.
+    """
+    permission_classes = [EsOperadorStock]
+
+    def get(self, request, pes_nro):
+        sql = _CODELCO_SQL.format(where_extra="AND pes_nro = ?")
+        try:
+            with _codelco_conn() as conn:
+                cursor = conn.cursor()
+                cursor.execute(sql, [str(pes_nro)])
+                row = cursor.fetchone()
+        except Exception as exc:
+            return Response(
+                {'error': 'Error al consultar SQL Server', 'detalle': str(exc)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        if row is None:
+            return Response(
+                {'error': f'Pesaje {pes_nro} no encontrado.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        item = {}
+        for i, field in enumerate(_CODELCO_FIELDS):
+            val = row[i + 1]  # +1 porque columna 0 es rn (no expuesta)
+            if hasattr(val, 'isoformat'):
+                val = val.isoformat()
+            elif hasattr(val, '__float__'):
+                val = str(val)
+            item[field] = val
+
+        return Response(item)
+

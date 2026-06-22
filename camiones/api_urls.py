@@ -19,4 +19,14 @@ urlpatterns = [
         api_views.importar_xml_y_confirmar_view,
         name='importar_xml_y_confirmar',
     ),
+    path(
+        'pesajes-codelco/',
+        api_views.PesajesCodelcoAPIView.as_view(),
+        name='pesajes-codelco',
+    ),
+    path(
+        'pesajes-codelco/<str:pes_nro>/',
+        api_views.PesajeCodelcoDetailAPIView.as_view(),
+        name='pesajes-codelco-detail',
+    ),
 ] + router.urls

@@ -13,8 +13,12 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+load_dotenv(BASE_DIR / '.env')
 
 
 # Quick-start development settings - unsuitable for production
@@ -26,7 +30,7 @@ SECRET_KEY = 'django-insecure-oe2!x@tb=bc+#gm9hkx0)y!hiyb=zmoy%5p9+r-)nw#e+c04b$
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['*']
 
 
 # Application definition
@@ -201,6 +205,13 @@ ETRUCK_SQLSERVER = {
     'DRIVER': os.getenv('ETRUCK_SQLSERVER_DRIVER', 'ODBC Driver 17 for SQL Server'),
     'TRUSTED_CONNECTION': os.getenv('ETRUCK_SQLSERVER_TRUSTED', 'yes'),
 }
+
+# Configuracion SQL Server para API pesajes Codelco (usuario solo lectura).
+ETRUCK_CODELCO_SQL_SERVER = os.getenv('ETRUCK_CODELCO_SQL_SERVER', 'pverq2')
+ETRUCK_CODELCO_SQL_DATABASE = os.getenv('ETRUCK_CODELCO_SQL_DATABASE', 'WSCLIENTE')
+ETRUCK_CODELCO_SQL_USER = os.getenv('ETRUCK_CODELCO_SQL_USER', 'usr_etruck_read')
+ETRUCK_CODELCO_SQL_PASSWORD = os.getenv('ETRUCK_CODELCO_SQL_PASSWORD', '')
+ETRUCK_CODELCO_SQL_DRIVER = os.getenv('ETRUCK_CODELCO_SQL_DRIVER', 'ODBC Driver 17 for SQL Server')
 
 # ─── Celery ───
 CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://127.0.0.1:6379/0')
