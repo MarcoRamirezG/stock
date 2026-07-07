@@ -29,4 +29,24 @@ urlpatterns = [
         api_views.PesajeCodelcoDetailAPIView.as_view(),
         name='pesajes-codelco-detail',
     ),
+    path(
+        'pesajes-cristalerias/',
+        api_views.PesajesCristaleriasAPIView.as_view(),
+        name='pesajes-cristalerias',
+    ),
+    path(
+        'pesajes-cristalerias/<str:pes_nro>/',
+        api_views.PesajeCristaleriasDetailAPIView.as_view(),
+        name='pesajes-cristalerias-detail',
+    ),
+    path(
+        'pesajes-portland/',
+        api_views.PesajesPortlandAPIView.as_view(),
+        name='pesajes-portland',
+    ),
+    path(
+        'pesajes-portland/<str:pes_nro>/',
+        api_views.PesajePortlandDetailAPIView.as_view(),
+        name='pesajes-portland-detail',
+    ),
 ] + router.urls

@@ -168,9 +168,9 @@ class PesajeViewSet(viewsets.ReadOnlyModelViewSet):
         return PesajeListSerializer
 
 
-# ─── API Pesajes Codelco (SELECT directo SQL Server, sin XML) ───
+# ─── API Pesajes Codelco/Cristalerias (SELECT directo SQL Server, sin XML) ───
 
-_CODELCO_SQL = """
+_PESAJES_BASE_SQL = """
 WITH PesajesCodelco AS (
     SELECT
         ROW_NUMBER() OVER (
@@ -248,9 +248,8 @@ WITH PesajesCodelco AS (
         WHERE A.PesBseCod = P.PesBseCod AND A.PesNro = P.PesNro
     ) Attr
 
-    WHERE P.PesBseCod = 3
-      AND P.PesEst = 'T'
-      AND (CliOri.CliDId = 61704000 OR CliDst.CliDId = 61704000)
+        WHERE P.PesEst = 'T'
+            AND (CliOri.CliDId = {cliente_did} OR CliDst.CliDId = {cliente_did})
 )
 SELECT *
 FROM PesajesCodelco
@@ -258,6 +257,10 @@ WHERE rn = 1
   {where_extra}
 ORDER BY pes_fec_ing DESC, pes_nro DESC
 """
+
+_PESAJES_CODELCO_SQL = _PESAJES_BASE_SQL.format(cliente_did=61704000, where_extra="{where_extra}")
+_PESAJES_CRISTALERIAS_SQL = _PESAJES_BASE_SQL.format(cliente_did=90331000, where_extra="{where_extra}")
+_PESAJES_PORTLAND_SQL = _PESAJES_BASE_SQL.format(cliente_did=87690900, where_extra="{where_extra}")
 
 _CODELCO_FIELDS = [
     'pes_nro', 'pes_est', 'pes_fec_ing', 'vhc_pat', 'pes_aco_pat',
@@ -304,6 +307,7 @@ class PesajesCodelcoAPIView(APIView):
       - fecha_hasta   : ISO date YYYY-MM-DD (inclusive)
     """
     permission_classes = [EsOperadorStock]
+    sql_template = _PESAJES_CODELCO_SQL
 
     def get(self, request):
         conditions = []
@@ -335,7 +339,7 @@ class PesajesCodelcoAPIView(APIView):
             params.append(fecha_hasta)
 
         where_extra = ("AND " + " AND ".join(conditions)) if conditions else ""
-        sql = _CODELCO_SQL.format(where_extra=where_extra)
+        sql = self.sql_template.format(where_extra=where_extra)
 
         try:
             with _codelco_conn() as conn:
@@ -374,9 +378,10 @@ class PesajeCodelcoDetailAPIView(APIView):
     Responde 404 si no existe.
     """
     permission_classes = [EsOperadorStock]
+    sql_template = _PESAJES_CODELCO_SQL
 
     def get(self, request, pes_nro):
-        sql = _CODELCO_SQL.format(where_extra="AND pes_nro = ?")
+        sql = self.sql_template.format(where_extra="AND pes_nro = ?")
         try:
             with _codelco_conn() as conn:
                 cursor = conn.cursor()
@@ -404,4 +409,44 @@ class PesajeCodelcoDetailAPIView(APIView):
             item[field] = val
 
         return Response(item)
+
+
+class PesajesCristaleriasAPIView(PesajesCodelcoAPIView):
+    """
+    GET /api/pesajes-cristalerias/
+
+    Misma logica de Codelco, filtrando por cliente RUT 90331000
+    (CRISTALERIAS DE CHILE S.A.).
+    """
+    sql_template = _PESAJES_CRISTALERIAS_SQL
+
+
+class PesajeCristaleriasDetailAPIView(PesajeCodelcoDetailAPIView):
+    """
+    GET /api/pesajes-cristalerias/<pes_nro>/
+
+    Detalle de pesaje para cliente RUT 90331000
+    (CRISTALERIAS DE CHILE S.A.).
+    """
+    sql_template = _PESAJES_CRISTALERIAS_SQL
+
+
+class PesajesPortlandAPIView(PesajesCodelcoAPIView):
+    """
+    GET /api/pesajes-portland/
+
+    Misma logica de Codelco, filtrando por cliente RUT 87690900
+    (DISTRIBUIDORA PORTLAND S.A.).
+    """
+    sql_template = _PESAJES_PORTLAND_SQL
+
+
+class PesajePortlandDetailAPIView(PesajeCodelcoDetailAPIView):
+    """
+    GET /api/pesajes-portland/<pes_nro>/
+
+    Detalle de pesaje para cliente RUT 87690900
+    (DISTRIBUIDORA PORTLAND S.A.).
+    """
+    sql_template = _PESAJES_PORTLAND_SQL
 
